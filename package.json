@@ -1,0 +1,16 @@
+{
+  "name": "announcement-editor-system",
+  "version": "1.0.0",
+  "description": "建设工程采购公告编辑/评审/发布系统（Vue + API + SQL + 对象服务）",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/index.js",
+    "seed": "node server/seed.js",
+    "test": "node test/acceptance.test.js"
+  },
+  "dependencies": {
+    "sql.js": "^1.13.0",
+    "vue": "^3.5.43"
+  }
+}
