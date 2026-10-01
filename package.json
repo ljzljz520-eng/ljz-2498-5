@@ -1,0 +1,14 @@
+{
+  "name": "announcement-editor",
+  "version": "1.0.0",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test test/"
+  },
+  "description": "公告编辑系统：Vue 录入 + API 验证 + SQL 版本/审批 + 对象存储",
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.22.3"
+  }
+}

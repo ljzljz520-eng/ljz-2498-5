@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>公告编辑系统</title>
+<script src="/vendor/vue.global.prod.js"></script>
+<style>
+:root { --blue:#2456a6; --red:#b3261e; --green:#1a7f37; --amber:#9a6700; --gray:#666; --bg:#f5f6f8; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: system-ui, "Noto Sans CJK SC", sans-serif; background:var(--bg); color:#222; }
+header { background:var(--blue); color:#fff; padding:10px 20px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+header h1 { font-size:18px; margin:0; }
+header .spacer { flex:1; }
+select, input, textarea, button { font: inherit; }
+button { cursor:pointer; border:1px solid #bbb; background:#fff; border-radius:4px; padding:5px 12px; }
+button.primary { background:var(--blue); color:#fff; border-color:var(--blue); }
+button.danger { background:var(--red); color:#fff; border-color:var(--red); }
+button:disabled { opacity:.45; cursor:not-allowed; }
+.layout { display:flex; min-height:calc(100vh - 52px); }
+aside { width:300px; background:#fff; border-right:1px solid #ddd; padding:12px; overflow-y:auto; }
+main { flex:1; padding:16px 20px; overflow-y:auto; }
+.card { background:#fff; border:1px solid #ddd; border-radius:6px; padding:14px 16px; margin-bottom:14px; }
+.card h3 { margin:0 0 10px; font-size:15px; border-bottom:1px solid #eee; padding-bottom:8px; }
+.ann-item { padding:8px 10px; border:1px solid #e2e2e2; border-radius:5px; margin-bottom:8px; cursor:pointer; }
+.ann-item:hover { border-color:var(--blue); }
+.ann-item.active { border-color:var(--blue); background:#eef4ff; }
+.badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; color:#fff; margin-left:6px; }
+.b-draft{background:#666}.b-in_review{background:#0b6bcb}.b-approved{background:#6f4bb6}
+.b-published{background:var(--green)}.b-withdrawn{background:var(--red)}
+.b-current{background:var(--green)}.b-superseded{background:var(--amber)}.b-unpublished{background:#888}
+.b-pending{background:#888}.b-correction{background:#0b6bcb}
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px 18px; }
+.grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px 14px; }
+label { display:block; font-size:12px; color:#555; margin-bottom:2px; }
+input[type=text], input[type=date], input[type=time], select, textarea {
+  width:100%; padding:5px 8px; border:1px solid #ccc; border-radius:4px; }
+textarea { min-height:64px; }
+.conflict { padding:6px 10px; border-radius:4px; margin-bottom:6px; font-size:13px; }
+.conflict.error { background:#fde7e9; border:1px solid var(--red); }
+.conflict.warning { background:#fff4d6; border:1px solid var(--amber); }
+.conflict code { background:rgba(0,0,0,.06); padding:0 4px; border-radius:3px; }
+table { border-collapse:collapse; width:100%; font-size:13px; }
+td, th { border:1px solid #ddd; padding:5px 8px; text-align:left; vertical-align:top; }
+.mono { font-family:ui-monospace,monospace; font-size:12px; word-break:break-all; }
+.stale { color:var(--red); font-weight:600; }
+.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.toast { position:fixed; right:16px; bottom:16px; background:#222; color:#fff; padding:10px 16px; border-radius:6px; max-width:480px; z-index:9; }
+.toast.err { background:var(--red); }
+.disclaimer { background:#fff8e1; border:1px solid #e0c060; padding:8px 12px; font-size:12px; border-radius:4px; margin-top:10px; }
+.progress { height:8px; background:#eee; border-radius:4px; overflow:hidden; margin-top:4px; }
+.progress > div { height:100%; background:var(--blue); }
+.muted { color:#777; font-size:12px; }
+h4.sec { margin:14px 0 6px; font-size:13px; color:var(--blue); }
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+  <h1>公告编辑系统</h1>
+  <button @click="view='list'; loadList()">公告列表</button>
+  <button @click="view='rules'; loadRules()">规则配置</button>
+  <button @click="newAnnouncement()">＋ 新建公告</button>
+  <span class="spacer"></span>
+  <label style="color:#cfe0ff">演示用户</label>
+  <input type="text" v-model="user" style="width:110px">
+  <label style="color:#cfe0ff">角色</label>
+  <select v-model="rolePreset" style="width:220px">
+    <option value="editor">编辑（editor）</option>
+    <option value="legal">法务评审（legal）</option>
+    <option value="business">业务评审（business）</option>
+    <option value="publisher">发布员（publisher）</option>
+    <option value="admin,editor,publisher,legal,business">管理员（全部角色）</option>
+  </select>
+</header>
+
+<div class="layout">
+  <aside v-if="view!=='rules'">
+    <h4 class="sec">公告</h4>
+    <div v-for="a in announcements" :key="a.id" class="ann-item" :class="{active: detail && detail.announcement.id===a.id}" @click="openAnn(a.id)">
+      <div><b>{{ a.title }}</b><span class="badge" :class="'b-'+a.status">{{ statusLabel(a.status) }}</span>
+        <span v-if="a.kind==='correction'" class="badge b-correction">更正</span></div>
+      <div class="muted">{{ a.id }} ｜ 当前 v{{ a.current_version_no }}<span v-if="a.published_version_no"> ｜ 已发布 v{{ a.published_version_no }}</span></div>
+    </div>
+    <div v-if="!announcements.length" class="muted">暂无公告，点击「新建公告」。</div>
+  </aside>
+
+  <main>
+    <!-- 规则配置 -->
+    <div v-if="view==='rules'">
+      <div class="card">
+        <h3>公告规则（用户配置，版本化）</h3>
+        <div class="grid2">
+          <div><label>规则名</label><input type="text" v-model="ruleForm.name" placeholder="default"></div>
+          <div><label>最短公告期（天）</label><input type="text" v-model.number="ruleForm.min_notice_days"></div>
+          <div><label>截止日解释时区</label>
+            <select v-model="ruleForm.deadline_timezone"><option v-for="t in tzList" :value="t">{{t}}</option></select></div>
+          <div><label>截止须为工作日</label>
+            <select v-model="ruleForm.deadline_must_be_workday"><option :value="true">是</option><option :value="false">否</option></select></div>
+          <div><label>开标距截止最少分钟数</label><input type="text" v-model.number="ruleForm.bid_open_after_deadline_minutes"></div>
+          <div><label>资格要求必填</label>
+            <select v-model="ruleForm.require_qualification_text"><option :value="true">是</option><option :value="false">否</option></select></div>
+          <div><label>必备附件（逗号分隔）</label><input type="text" v-model="ruleForm.required_attachments_text"></div>
+          <div><label>评审定额（如 legal:1,business:1）</label><input type="text" v-model="ruleForm.review_quorum_text"></div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="primary" @click="saveRule()">保存为规则新版本</button>
+          <span class="muted">保存产生新的规则版本；已评审版本仍绑定其评审时的规则版。</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3>规则版本历史</h3>
+        <table><tr><th>名称</th><th>版本</th><th>配置</th><th>创建</th></tr>
+          <tr v-for="r in rules" :key="r.id"><td>{{r.name}}</td><td>v{{r.version}}</td>
+            <td class="mono">{{ JSON.stringify(r.config) }}</td><td class="muted">{{r.created_by}} {{r.created_at}}</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- 公告详情 -->
+    <div v-if="view==='detail' && detail">
+      <div class="card">
+        <h3>{{ detail.announcement.title }}
+          <span class="badge" :class="'b-'+detail.announcement.status">{{ statusLabel(detail.announcement.status) }}</span>
+          <span v-if="detail.announcement.kind==='correction'" class="badge b-correction">更正公告</span>
+        </h3>
+        <div class="muted">
+          {{ detail.announcement.id }}
+          <span v-if="detail.announcement.corrects_announcement_id"> ｜ 更正对象：
+            <a href="#" @click.prevent="openAnn(detail.announcement.corrects_announcement_id)">{{ detail.announcement.corrects_announcement_id }}</a>
+            （{{ detail.announcement.correction_reason }}）</span>
+          ｜ <a :href="'/public/announcements/'+detail.announcement.id" target="_blank">公开页 ↗</a>
+        </div>
+        <div v-if="detail.corrections.length" style="margin-top:6px">
+          <span class="muted">关联更正公告：</span>
+          <a v-for="c in detail.corrections" :key="c.id" href="#" @click.prevent="openAnn(c.id)" style="margin-right:8px">{{ c.title }}（{{ statusLabel(c.status) }}）</a>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="primary" @click="submitReview()" :disabled="!canEdit">提交评审</button>
+          <button @click="newVersion()" :disabled="!canEdit">基于当前新建版本</button>
+          <button class="danger" @click="withdraw()" :disabled="detail.announcement.status==='withdrawn'">撤回</button>
+          <button class="primary" @click="publish()" :disabled="detail.announcement.status!=='approved'">发布当前版本</button>
+          <button @click="createCorrection()" :disabled="detail.announcement.status!=='published' || detail.announcement.kind==='correction'">追加更正公告</button>
+          <button @click="rebuild()" :disabled="!detail.manifest">按发布清单重建</button>
+        </div>
+        <div v-if="rebuildResult" class="card" style="margin-top:10px;background:#f8fbff">
+          <b>重建校验：{{ rebuildResult.ok ? '✔ 全部一致' : '✘ 存在不一致' }}</b>
+          <table style="margin-top:6px"><tr v-for="c in rebuildResult.checks"><td>{{c.item}}</td><td>{{c.ok?'✔':'✘'}}</td><td class="mono">{{c.reason||c.expected||''}}</td></tr></table>
+        </div>
+      </div>
+
+      <!-- 版本选择 -->
+      <div class="card">
+        <h3>版本（评审意见绑定具体版本）</h3>
+        <div class="row">
+          <button v-for="v in detail.versions" :key="v.id"
+                  :style="v.id===currentVersion.id ? 'background:#2456a6;color:#fff' : ''"
+                  @click="selectVersion(v.version_no)">
+            v{{ v.version_no }}
+          </button>
+          <span class="badge" :class="'b-'+currentVersion.validity.code">{{ currentVersion.validity.label }}</span>
+          <span class="muted" v-if="currentVersion.change_reason">变更说明：{{ currentVersion.change_reason }}</span>
+        </div>
+      </div>
+
+      <!-- 编辑表单 -->
+      <div class="card">
+        <h3>内容 {{ canEdit ? '' : '（当前状态只读）' }}</h3>
+        <div class="grid2">
+          <div><label>项目名称 *</label><input type="text" v-model="form.project_name" :disabled="!canEdit"></div>
+          <div><label>项目编号</label><input type="text" v-model="form.project_code" :disabled="!canEdit"></div>
+        </div>
+        <div><label>采购范围 *（修改后关联批准需复核）</label>
+          <textarea v-model="form.scope" :disabled="!canEdit"></textarea></div>
+        <div><label>资格要求</label>
+          <textarea v-model="form.qualifications" :disabled="!canEdit"></textarea></div>
+
+        <h4 class="sec">公告开始（带时区时刻）</h4>
+        <div class="grid3">
+          <div><label>日期</label><input type="date" v-model="form.notice_start.date" :disabled="!canEdit"></div>
+          <div><label>时刻</label><input type="time" v-model="form.notice_start.time" :disabled="!canEdit"></div>
+          <div><label>时区</label><select v-model="form.notice_start.tz" :disabled="!canEdit"><option v-for="t in tzList" :value="t">{{t}}</option></select></div>
+        </div>
+        <h4 class="sec">投标截止日（纯日期，按规则时区解释；区别于时刻）</h4>
+        <div class="grid3">
+          <div><label>截止日</label><input type="date" v-model="form.submit_deadline.date" :disabled="!canEdit"></div>
+          <div><label>截止时刻</label><input type="time" v-model="form.submit_deadline.time" :disabled="!canEdit"></div>
+          <div><label>解释时区</label><select v-model="form.submit_deadline.tz" :disabled="!canEdit"><option v-for="t in tzList" :value="t">{{t}}</option></select></div>
+        </div>
+        <h4 class="sec">开标（带时区时刻，可空）</h4>
+        <div class="grid3">
+          <div><label>日期</label><input type="date" v-model="form.bid_open.date" :disabled="!canEdit"></div>
+          <div><label>时刻</label><input type="time" v-model="form.bid_open.time" :disabled="!canEdit"></div>
+          <div><label>时区</label><select v-model="form.bid_open.tz" :disabled="!canEdit"><option v-for="t in tzList" :value="t">{{t}}</option></select></div>
+        </div>
+        <div class="grid2" style="margin-top:10px">
+          <div><label>适用规则</label>
+            <select v-model="form.rule_name" :disabled="!canEdit"><option v-for="n in ruleNames" :value="n">{{n}}</option></select></div>
+          <div><label>变更说明</label><input type="text" v-model="form.change_reason" :disabled="!canEdit" placeholder="如：更正截止日"></div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="primary" @click="saveVersion()" :disabled="!canEdit">保存（重算正文摘要）</button>
+          <span class="muted">正文摘要：<span class="mono">{{ currentVersion.body_hash.slice(0,16) }}…</span>
+            ｜ 附件集摘要：<span class="mono">{{ currentVersion.attachment_digest.slice(0,16) }}…</span>
+            ｜ 规则版：{{ currentVersion.rule_name }} v{{ currentVersion.rule_version }}</span>
+        </div>
+      </div>
+
+      <!-- 附件 -->
+      <div class="card">
+        <h3>附件（同名替换留痕；未固定不能发布）</h3>
+        <table>
+          <tr><th>名称</th><th>状态</th><th>大小</th><th>SHA-256</th><th></th></tr>
+          <tr v-for="a in currentVersion.attachments" :key="a.id">
+            <td>{{ a.name }}</td>
+            <td><span :style="a.state==='sealed'?'color:var(--green)':'color:var(--red)'">{{ a.state==='sealed'?'已固定':'上传未完成' }}</span></td>
+            <td>{{ a.size ?? '—' }}</td>
+            <td class="mono">{{ a.sha256 ? a.sha256.slice(0,20)+'…' : '—' }}</td>
+            <td><button v-if="canEdit" class="danger" @click="removeAttachment(a)">移除</button></td>
+          </tr>
+          <tr v-if="!currentVersion.attachments.length"><td colspan="5" class="muted">暂无附件</td></tr>
+        </table>
+        <div v-if="canEdit" class="row" style="margin-top:10px">
+          <input type="text" v-model="attachName" placeholder="附件名（同名即替换）" style="width:220px">
+          <input type="file" @change="onFilePicked" ref="fileInput">
+          <button class="primary" @click="uploadAndAttach()" :disabled="!pickedFile || !attachName || uploading">
+            {{ uploading ? '上传中…' : '分片上传并关联' }}</button>
+        </div>
+        <div v-if="uploading" class="progress"><div :style="{width: uploadPct+'%'}"></div></div>
+        <div class="muted" v-if="uploading">{{ uploadPct }}%（分片续传，服务重启后可从断点继续）</div>
+      </div>
+
+      <!-- 预览：跨字段冲突 -->
+      <div class="card">
+        <h3>预览与跨字段冲突 <button @click="loadPreview()">刷新预览</button></h3>
+        <div v-if="preview">
+          <div v-for="c in preview.conflicts" :key="c.code" class="conflict" :class="c.severity">
+            <code>{{ c.code }}</code> {{ c.message }}
+          </div>
+          <div v-if="!preview.conflicts.length" style="color:var(--green)">✔ 未发现跨字段冲突</div>
+          <div class="muted" style="margin-top:6px">
+            归一化日程：公告期 {{ preview.normalized.notice_days.toFixed(2) }} 天
+            ｜ 截止瞬间 {{ preview.normalized.submit_deadline_instant }}
+            ｜ 评审定额满足：{{ preview.quorum.met ? '是' : '否（缺 ' + JSON.stringify(preview.quorum.missing) + '）' }}
+            ｜ 可发布：{{ preview.publish_ready ? '是' : '否' }}
+          </div>
+        </div>
+      </div>
+
+      <!-- 评审 -->
+      <div class="card">
+        <h3>评审（意见绑定 v{{ currentVersion.version_no }}）</h3>
+        <table>
+          <tr><th>评审人</th><th>角色</th><th>结论</th><th>意见</th><th>时间</th><th>状态</th></tr>
+          <tr v-for="r in currentVersion.reviews" :key="r.id">
+            <td>{{ r.reviewer }}</td><td>{{ r.role }}</td>
+            <td>{{ {approve:'批准',reject:'驳回',comment:'意见'}[r.decision] }}</td>
+            <td>{{ r.comment }}</td><td class="muted">{{ r.created_at }}</td>
+            <td><span v-if="r.stale" class="stale">需复核（范围/附件已变更）</span>
+                <span v-else-if="r.carried_from_review_id" class="muted">自上一版本平移</span>
+                <span v-else style="color:var(--green)">有效</span></td>
+          </tr>
+          <tr v-if="!currentVersion.reviews.length"><td colspan="6" class="muted">暂无评审</td></tr>
+        </table>
+        <div class="row" style="margin-top:10px" v-if="detail.announcement.status==='in_review'">
+          <select v-model="reviewForm.role" style="width:160px">
+            <option value="legal">legal（法务）</option><option value="business">business（业务）</option><option value="finance">finance（财务）</option>
+          </select>
+          <select v-model="reviewForm.decision" style="width:120px">
+            <option value="approve">批准</option><option value="reject">驳回</option><option value="comment">仅意见</option>
+          </select>
+          <input type="text" v-model="reviewForm.comment" placeholder="评审意见" style="width:280px">
+          <button class="primary" @click="submitReviewDecision()">提交评审意见</button>
+          <span class="muted">需当前用户具备对应角色（页首切换）</span>
+        </div>
+      </div>
+
+      <!-- 发布清单 -->
+      <div class="card" v-if="detail.manifest">
+        <h3>发布清单（正式文件可按此重建）</h3>
+        <div class="muted">版本 v{{ detail.announcement.published_version_no }} ｜ 发布于 {{ detail.manifest.published_at }} ｜ 发布人 {{ detail.manifest.publisher }}</div>
+        <div class="mono">正文摘要 {{ detail.manifest.body_hash }}</div>
+        <div class="mono">附件集摘要 {{ detail.manifest.attachment_digest }}</div>
+        <div class="mono">渲染对象 {{ detail.manifest.render_object_key }}</div>
+        <table style="margin-top:6px">
+          <tr><th>附件</th><th>SHA-256</th><th>大小</th></tr>
+          <tr v-for="a in detail.manifest.attachments" :key="a.name"><td>{{a.name}}</td><td class="mono">{{a.sha256}}</td><td>{{a.size}}</td></tr>
+        </table>
+      </div>
+
+      <!-- 历史 -->
+      <div class="card">
+        <h3>版本历史与有效状态（旧公告链接保持有效）</h3>
+        <table>
+          <tr><th>版本</th><th>状态</th><th>变更说明</th><th>创建</th><th>公开链接</th></tr>
+          <tr v-for="v in detail.versions" :key="v.id">
+            <td>v{{ v.version_no }}</td>
+            <td><span class="badge" :class="'b-'+v.validity.code">{{ v.validity.label }}</span></td>
+            <td>{{ v.change_reason }}</td>
+            <td class="muted">{{ v.created_by }} {{ v.created_at }}</td>
+            <td><a :href="'/public/announcements/'+detail.announcement.id+'/versions/'+v.version_no" target="_blank">打开 ↗</a></td>
+          </tr>
+        </table>
+      </div>
+      <div class="disclaimer">本系统为公告流程辅助工具，其校验与渲染结果不构成法律审查意见，不能替代专业法律审查。</div>
+    </div>
+
+    <!-- 新建公告 -->
+    <div v-if="view==='create'">
+      <div class="card">
+        <h3>新建公告</h3>
+        <label>公告标题 *</label>
+        <input type="text" v-model="createTitle" placeholder="如：2026年度服务器采购公告">
+        <div class="row" style="margin-top:10px">
+          <button class="primary" @click="doCreate()" :disabled="!createTitle">创建并进入编辑</button>
+        </div>
+        <div class="muted" style="margin-top:6px">创建后进入详情页填写项目、范围、资格、日期并上传附件。</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div v-if="toast" class="toast" :class="{err: toastErr}">{{ toast }}</div>
+</div>
+
+<script>
+const { createApp } = Vue;
+const TZ_LIST = ['Asia/Shanghai','Asia/Urumqi','Asia/Tokyo','Europe/London','America/New_York','UTC'];
+
+createApp({
+  data() {
+    return {
+      user: 'demo', rolePreset: 'admin,editor,publisher,legal,business',
+      view: 'list', announcements: [], detail: null, preview: null,
+      rules: [], tzList: TZ_LIST,
+      createTitle: '',
+      form: null, attachName: '', pickedFile: null, uploading: false, uploadPct: 0,
+      reviewForm: { role: 'legal', decision: 'approve', comment: '' },
+      ruleForm: { name: 'default', min_notice_days: 20, deadline_timezone: 'Asia/Shanghai',
+        deadline_must_be_workday: false, bid_open_after_deadline_minutes: 60,
+        require_qualification_text: true, required_attachments_text: '招标文件.pdf',
+        review_quorum_text: 'legal:1,business:1' },
+      rebuildResult: null, selNo: null,
+      toast: '', toastErr: false,
+    };
+  },
+  computed: {
+    currentVersion() {
+      if (!this.detail) return null;
+      return this.detail.versions.find(v => v.version_no === this.selNo)
+        || this.detail.versions.find(v => v.id === this.detail.announcement.current_version_id)
+        || this.detail.versions[0];
+    },
+    canEdit() {
+      const a = this.detail && this.detail.announcement;
+      return a && ['draft','published'].includes(a.status) && this.currentVersion
+        && this.currentVersion.id === a.current_version_id
+        && this.currentVersion.id !== a.published_version_id;
+    },
+    ruleNames() { return [...new Set(this.rules.map(r => r.name))]; },
+  },
+  methods: {
+    statusLabel(s) {
+      return { draft:'草稿', in_review:'评审中', approved:'已批准', published:'已发布', withdrawn:'已撤回' }[s] || s;
+    },
+    say(msg, isErr) {
+      this.toast = msg; this.toastErr = !!isErr;
+      setTimeout(() => { this.toast = ''; }, 5000);
+    },
+    async api(method, path, body, raw) {
+      const headers = { 'x-user': this.user, 'x-roles': this.rolePreset };
+      let payload;
+      if (raw) { payload = raw; }
+      else if (body !== undefined) { headers['content-type'] = 'application/json'; payload = JSON.stringify(body); }
+      const res = await fetch(path, { method, headers, body: payload });
+      const text = await res.text();
+      let json; try { json = JSON.parse(text); } catch { json = text; }
+      if (!res.ok) {
+        const e = (json && json.error) ? `${json.error.code}: ${json.error.message}` : `HTTP ${res.status}`;
+        const err = new Error(e); err.status = res.status; err.body = json; throw err;
+      }
+      return json;
+    },
+    async loadList() {
+      this.announcements = await this.api('GET', '/api/announcements');
+      await this.loadRules();
+    },
+    async loadRules() { this.rules = await this.api('GET', '/api/rules'); },
+    newAnnouncement() { this.view = 'create'; this.createTitle = ''; },
+    async doCreate() {
+      try {
+        const today = new Date();
+        const d = (n) => { const t = new Date(today.getTime() + n*86400000); return t.toISOString().slice(0,10); };
+        const r = await this.api('POST', '/api/announcements', {
+          title: this.createTitle,
+          version: {
+            project_name: this.createTitle, project_code: '', scope: '（待填写采购范围）', qualifications: '',
+            notice_start: { date: d(1), time: '09:00', tz: 'Asia/Shanghai' },
+            submit_deadline: { date: d(21), time: '17:00', tz: 'Asia/Shanghai' },
+            bid_open: { date: d(22), time: '10:00', tz: 'Asia/Shanghai' },
+            rule_name: 'default',
+          },
+        });
+        this.say('已创建 ' + r.id);
+        await this.openAnn(r.id);
+      } catch (e) { this.say(e.message, true); }
+    },
+    async openAnn(id) {
+      try {
+        this.detail = await this.api('GET', '/api/announcements/' + id);
+        this.view = 'detail';
+        this.rebuildResult = null;
+        this.selNo = this.detail.announcement.current_version_no;
+        this.fillForm();
+        await this.loadPreview();
+      } catch (e) { this.say(e.message, true); }
+    },
+    selectVersion(no) { this.selNo = no; this.fillForm(); this.loadPreview(); },
+    shownVersion() { return this.currentVersion; },
+    fillForm() {
+      const v = this.shownVersion();
+      this.form = {
+        project_name: v.project_name, project_code: v.project_code || '',
+        scope: v.scope, qualifications: v.qualifications || '',
+        notice_start: { date: v.notice_start_date, time: v.notice_start_time, tz: v.notice_start_tz },
+        submit_deadline: { date: v.submit_deadline_date, time: v.submit_deadline_time, tz: v.deadline_tz },
+        bid_open: v.bid_open_date ? { date: v.bid_open_date, time: v.bid_open_time, tz: v.bid_open_tz } : { date: '', time: '', tz: 'Asia/Shanghai' },
+        rule_name: v.rule_name, change_reason: v.change_reason || '',
+      };
+    },
+    versionPayload() {
+      const f = this.form;
+      return {
+        project_name: f.project_name, project_code: f.project_code,
+        scope: f.scope, qualifications: f.qualifications,
+        notice_start: f.notice_start, submit_deadline: f.submit_deadline,
+        bid_open: f.bid_open.date ? f.bid_open : null,
+        rule_name: f.rule_name, change_reason: f.change_reason,
+      };
+    },
+    async saveVersion() {
+      try {
+        const v = this.currentVersion;
+        const r = await this.api('PUT', '/api/versions/' + v.id, this.versionPayload());
+        this.say(r.approvals_staled ? `已保存；${r.approvals_staled} 条批准因范围变更需复核` : '已保存');
+        await this.openAnn(this.detail.announcement.id);
+      } catch (e) { this.say(e.message, true); }
+    },
+    async newVersion() {
+      try {
+        const r = await this.api('POST', `/api/announcements/${this.detail.announcement.id}/versions`,
+          { ...this.versionPayload(), change_reason: this.form.change_reason || '内容修订' });
+        this.say(`已创建 v${r.version_no}；平移批准 ${r.approvals_carried} 条，失效 ${r.approvals_staled} 条`);
+        await this.openAnn(this.detail.announcement.id);
+      } catch (e) { this.say(e.message, true); }
+    },
+    async loadPreview() {
+      if (!this.detail) return;
+      const v = this.shownVersion();
+      try { this.preview = await this.api('GET', `/api/versions/${v.id}/preview`); }
+      catch (e) { this.preview = null; }
+    },
+    async submitReview() {
+      try {
+        await this.api('POST', `/api/announcements/${this.detail.announcement.id}/submit`,
+          { version_no: this.detail.announcement.current_version_no });
+        this.say('已提交评审');
+        await this.openAnn(this.detail.announcement.id);
+      } catch (e) {
+        if (e.body && e.body.error && e.body.error.details && e.body.error.details.conflicts) {
+          this.say('存在冲突，详见预览面板', true);
+          await this.loadPreview();
+        } else this.say(e.message, true);
+      }
+    },
+    async submitReviewDecision() {
+      try {
+        const r = await this.api('POST', `/api/announcements/${this.detail.announcement.id}/reviews`, {
+          version_no: this.detail.announcement.current_version_no,
+          role: this.reviewForm.role, decision: this.reviewForm.decision, comment: this.reviewForm.comment,
+        });
+        this.say('评审已记录，当前状态：' + this.statusLabel(r.status));
+        await this.openAnn(this.detail.announcement.id);
+      } catch (e) { this.say(e.message, true); }
+    },
+    async withdraw() {
+      if (!confirm('确认撤回？撤回为终态，公开页将显示已撤回。')) return;
+      try {
+        await this.api('POST', `/api/announcements/${this.detail.announcement.id}/withdraw`);
+        this.say('已撤回');
+        await this.openAnn(this.detail.announcement.id);
+      } catch (e) { this.say(e.message, true); await this.openAnn(this.detail.announcement.id); }
+    },
+    async publish() {
+      try {
+        const v = this.detail.versions.find(x => x.id === this.detail.announcement.current_version_id);
+        const r = await this.api('POST', `/api/announcements/${this.detail.announcement.id}/publish`, {
+          version_no: v.version_no,
+          expected_body_hash: v.body_hash,
+          expected_attachment_digest: v.attachment_digest,
+        });
+        this.say(`已发布 v${this.detail.announcement.current_version_no}，清单 #${r.manifest.id}`);
+        await this.openAnn(this.detail.announcement.id);
+      } catch (e) { this.say(e.message, true); await this.openAnn(this.detail.announcement.id); }
+    },
+    async createCorrection() {
+      const reason = prompt('更正原因：');
+      if (reason == null) return;
+      try {
+        const r = await this.api('POST', `/api/announcements/${this.detail.announcement.id}/corrections`, { reason });
+        this.say('已创建更正公告 ' + r.id);
+        await this.loadList();
+        await this.openAnn(r.id);
+      } catch (e) { this.say(e.message, true); }
+    },
+    async rebuild() {
+      try {
+        this.rebuildResult = await this.api('POST', `/api/announcements/${this.detail.announcement.id}/rebuild`, {});
+      } catch (e) { this.say(e.message, true); }
+    },
+    onFilePicked(ev) { this.pickedFile = ev.target.files[0] || null; if (this.pickedFile && !this.attachName) this.attachName = this.pickedFile.name; },
+    async sha256Hex(buf) {
+      const h = await crypto.subtle.digest('SHA-256', buf);
+      return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
+    },
+    async uploadAndAttach() {
+      const file = this.pickedFile, name = this.attachName.trim();
+      if (!file || !name) return;
+      this.uploading = true; this.uploadPct = 0;
+      try {
+        const buf = await file.arrayBuffer();
+        const hex = await this.sha256Hex(buf);
+        const sess = await this.api('POST', '/api/uploads', { filename: name, size: buf.byteLength, sha256: hex });
+        const CHUNK = 256 * 1024;
+        let offset = 0;
+        while (offset < buf.byteLength) {
+          const piece = buf.slice(offset, offset + CHUNK);
+          const res = await fetch(`/api/uploads/${sess.id}/chunk?offset=${offset}`, {
+            method: 'PUT', headers: { 'x-user': this.user, 'x-roles': this.rolePreset }, body: piece });
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            if (j.error && j.error.details && j.error.details.received_bytes != null) { offset = j.error.details.received_bytes; continue; }
+            throw new Error('分片上传失败: ' + res.status);
+          }
+          offset += piece.byteLength;
+          this.uploadPct = Math.round(offset / buf.byteLength * 100);
+        }
+        await this.api('POST', `/api/uploads/${sess.id}/finalize`);
+        const r = await this.api('POST', `/api/versions/${this.currentVersion.id}/attachments`,
+          { name, upload_session_id: sess.id });
+        this.say(r.replaced ? `已替换同名附件「${name}」，${r.approvals_staled} 条批准需复核` : `附件「${name}」已固定`);
+        this.pickedFile = null; this.attachName = '';
+        if (this.$refs.fileInput) this.$refs.fileInput.value = '';
+        await this.openAnn(this.detail.announcement.id);
+      } catch (e) { this.say(e.message, true); }
+      finally { this.uploading = false; }
+    },
+    async removeAttachment(a) {
+      if (!confirm(`移除附件「${a.name}」？关联批准将需复核。`)) return;
+      try {
+        const r = await this.api('DELETE', '/api/attachments/' + a.id);
+        this.say(`已移除，${r.approvals_staled} 条批准需复核`);
+        await this.openAnn(this.detail.announcement.id);
+      } catch (e) { this.say(e.message, true); }
+    },
+    async saveRule() {
+      try {
+        const f = this.ruleForm;
+        const quorum = {};
+        f.review_quorum_text.split(',').forEach(p => {
+          const [k, v] = p.split(':').map(s => s.trim());
+          if (k && v) quorum[k] = Number(v);
+        });
+        const config = {
+          min_notice_days: f.min_notice_days,
+          deadline_timezone: f.deadline_timezone,
+          deadline_must_be_workday: f.deadline_must_be_workday,
+          bid_open_after_deadline_minutes: f.bid_open_after_deadline_minutes,
+          require_qualification_text: f.require_qualification_text,
+          required_attachments: f.required_attachments_text.split(',').map(s => s.trim()).filter(Boolean),
+          review_quorum: quorum,
+        };
+        const r = await this.api('POST', '/api/rules', { name: f.name, config });
+        this.say(`规则 ${r.name} 已保存为 v${r.version}`);
+        await this.loadRules();
+      } catch (e) { this.say(e.message, true); }
+    },
+  },
+  mounted() { this.loadList(); },
+}).mount('#app');
+</script>
+</body>
+</html>

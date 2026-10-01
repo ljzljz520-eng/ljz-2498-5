@@ -23,3 +23,10 @@ __pycache__/
 *.log
 .env
 .env.*
+
+# project runtime data
+data/
+
+# 但前端本地化的 Vue 需要入库
+!public/vendor/
+!public/vendor/vue.global.prod.js
